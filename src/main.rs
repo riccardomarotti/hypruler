@@ -1153,14 +1153,14 @@ fn main() {
     let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
 
     // Capture screen FIRST, before creating overlay
-    eprintln!("Capturing screen...");
+    // eprintln!("Capturing screen...");
     let screenshot = match capture_screen(&conn) {
         Ok(s) => {
-            eprintln!("Captured {}x{} screenshot", s.width, s.height);
+            // eprintln!("Captured {}x{} screenshot", s.width, s.height);
             s
         }
-        Err(e) => {
-            eprintln!("Failed to capture screen: {}", e);
+        Err(_e) => {
+            // eprintln!("Failed to capture screen: {}", e);
             std::process::exit(1);
         }
     };
