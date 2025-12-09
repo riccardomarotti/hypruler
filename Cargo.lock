@@ -284,9 +284,12 @@ name = "pixelsnap"
 version = "0.1.0"
 dependencies = [
  "fontdue",
+ "memmap2 0.9.9",
+ "rustix 1.1.2",
  "smithay-client-toolkit",
  "tiny-skia",
  "wayland-client",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

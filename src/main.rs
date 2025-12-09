@@ -20,15 +20,26 @@ use smithay_client_toolkit::{
     shm::{slot::SlotPool, Shm, ShmHandler},
 };
 use std::sync::Arc;
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Rect, Stroke, Transform};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::ffi::CString;
+use std::fs::File;
+use std::os::fd::{AsFd, OwnedFd};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform};
 use wayland_client::{
-    globals::registry_queue_init,
-    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
+    globals::{registry_queue_init, GlobalListContents},
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface, wl_buffer, wl_registry},
+    Connection, Dispatch, QueueHandle, Proxy,
 };
+use wayland_protocols_wlr::screencopy::v1::client::{
+    zwlr_screencopy_frame_v1::{self, ZwlrScreencopyFrameV1},
+    zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+};
+use memmap2::MmapMut;
+use rustix::fs::{self, SealFlags};
 
 const LINE_WIDTH: f32 = 2.0;
 const END_CAP_SIZE: f32 = 8.0;
+const EDGE_THRESHOLD: i32 = 25; // Luminance difference threshold for edge detection
 
 fn line_color() -> Color {
     Color::from_rgba8(231, 76, 60, 255) // #E74C3C
@@ -38,24 +49,398 @@ fn label_bg_color() -> Color {
     Color::from_rgba8(40, 40, 40, 230)
 }
 
+// ============================================================================
+// Screen Capture Types
+// ============================================================================
+
+#[derive(Debug, Clone, Copy)]
+struct FrameFormat {
+    format: wl_shm::Format,
+    width: u32,
+    height: u32,
+    stride: u32,
+}
+
+struct CaptureState {
+    format: Option<FrameFormat>,
+    done: AtomicBool,
+    ready: AtomicBool,
+    failed: AtomicBool,
+}
+
+impl CaptureState {
+    fn new() -> Self {
+        Self {
+            format: None,
+            done: AtomicBool::new(false),
+            ready: AtomicBool::new(false),
+            failed: AtomicBool::new(false),
+        }
+    }
+}
+
+// Dispatch implementations for screen capture
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: wl_registry::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+impl Dispatch<ZwlrScreencopyManagerV1, ()> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ZwlrScreencopyManagerV1,
+        _event: <ZwlrScreencopyManagerV1 as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+impl Dispatch<ZwlrScreencopyFrameV1, ()> for CaptureState {
+    fn event(
+        state: &mut Self,
+        _proxy: &ZwlrScreencopyFrameV1,
+        event: zwlr_screencopy_frame_v1::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_screencopy_frame_v1::Event::Buffer { format, width, height, stride } => {
+                if let wayland_client::WEnum::Value(fmt) = format {
+                    // Prefer common formats
+                    if matches!(fmt, wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888 | wl_shm::Format::Xbgr8888) {
+                        state.format = Some(FrameFormat { format: fmt, width, height, stride });
+                    } else if state.format.is_none() {
+                        state.format = Some(FrameFormat { format: fmt, width, height, stride });
+                    }
+                }
+            }
+            zwlr_screencopy_frame_v1::Event::BufferDone => {
+                state.done.store(true, Ordering::SeqCst);
+            }
+            zwlr_screencopy_frame_v1::Event::Ready { .. } => {
+                state.ready.store(true, Ordering::SeqCst);
+            }
+            zwlr_screencopy_frame_v1::Event::Failed => {
+                state.failed.store(true, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<wl_shm::WlShm, ()> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm::WlShm,
+        _event: wl_shm::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+impl Dispatch<wl_shm_pool::WlShmPool, ()> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_shm_pool::WlShmPool,
+        _event: <wl_shm_pool::WlShmPool as Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+impl Dispatch<wl_buffer::WlBuffer, ()> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_buffer::WlBuffer,
+        _event: wl_buffer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for CaptureState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_output::WlOutput,
+        _event: wl_output::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {}
+}
+
+// ============================================================================
+// Screen Capture Functions
+// ============================================================================
+
+fn create_shm_fd() -> std::io::Result<OwnedFd> {
+    loop {
+        match fs::memfd_create(
+            CString::new("pixelsnap-capture")?.as_c_str(),
+            fs::MemfdFlags::CLOEXEC | fs::MemfdFlags::ALLOW_SEALING,
+        ) {
+            Ok(fd) => {
+                let _ = fs::fcntl_add_seals(&fd, SealFlags::SHRINK | SealFlags::SEAL);
+                return Ok(fd);
+            }
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(errno) => return Err(std::io::Error::from(errno)),
+        }
+    }
+}
+
+struct Screenshot {
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    stride: u32,
+    format: wl_shm::Format,
+    luminance: Vec<u8>, // Pre-computed luminance for edge detection
+}
+
+impl Screenshot {
+    fn get_luminance(&self, x: u32, y: u32) -> u8 {
+        if x >= self.width || y >= self.height {
+            return 0;
+        }
+        self.luminance[(y * self.width + x) as usize]
+    }
+
+    fn get_pixel(&self, x: u32, y: u32) -> (u8, u8, u8, u8) {
+        if x >= self.width || y >= self.height {
+            return (0, 0, 0, 255);
+        }
+        let idx = (y * self.stride + x * 4) as usize;
+        if idx + 3 >= self.data.len() {
+            return (0, 0, 0, 255);
+        }
+        // Format is typically BGRA or ARGB
+        match self.format {
+            wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888 => {
+                // ARGB: B G R A in little endian = B at idx+0, G at idx+1, R at idx+2, A at idx+3
+                (self.data[idx + 2], self.data[idx + 1], self.data[idx], self.data[idx + 3])
+            }
+            wl_shm::Format::Xbgr8888 | wl_shm::Format::Abgr8888 => {
+                // XBGR: R G B X
+                (self.data[idx], self.data[idx + 1], self.data[idx + 2], self.data[idx + 3])
+            }
+            _ => {
+                // Default assumption: BGRA
+                (self.data[idx + 2], self.data[idx + 1], self.data[idx], self.data[idx + 3])
+            }
+        }
+    }
+}
+
+fn capture_screen(conn: &Connection) -> Result<Screenshot, String> {
+    let (globals, mut event_queue) = registry_queue_init::<CaptureState>(conn)
+        .map_err(|e| format!("Failed to init registry: {}", e))?;
+
+    let qh = event_queue.handle();
+    let mut state = CaptureState::new();
+
+    // Get the screencopy manager
+    let screencopy_manager: ZwlrScreencopyManagerV1 = globals
+        .bind(&qh, 3..=3, ())
+        .map_err(|_| "wlr-screencopy protocol not available. Is your compositor wlroots-based?")?;
+
+    // Get the first output
+    let output: wl_output::WlOutput = globals
+        .bind(&qh, 1..=4, ())
+        .map_err(|_| "No output available")?;
+
+    // Get shm
+    let shm: wl_shm::WlShm = globals
+        .bind(&qh, 1..=1, ())
+        .map_err(|_| "wl_shm not available")?;
+
+    // Request a frame capture (without cursor)
+    let frame = screencopy_manager.capture_output(0, &output, &qh, ());
+
+    // Wait for buffer format info
+    while !state.done.load(Ordering::SeqCst) {
+        event_queue.blocking_dispatch(&mut state)
+            .map_err(|e| format!("Dispatch error: {}", e))?;
+    }
+
+    let format = state.format.ok_or("No suitable buffer format received")?;
+
+    // Create shm buffer
+    let fd = create_shm_fd().map_err(|e| format!("Failed to create shm fd: {}", e))?;
+    let file = File::from(fd);
+    let size = (format.stride * format.height) as u64;
+    file.set_len(size).map_err(|e| format!("Failed to set file size: {}", e))?;
+
+    let shm_pool = shm.create_pool(file.as_fd(), size as i32, &qh, ());
+    let buffer = shm_pool.create_buffer(
+        0,
+        format.width as i32,
+        format.height as i32,
+        format.stride as i32,
+        format.format,
+        &qh,
+        (),
+    );
+
+    // Copy the frame
+    frame.copy(&buffer);
+
+    // Wait for ready or failed
+    while !state.ready.load(Ordering::SeqCst) && !state.failed.load(Ordering::SeqCst) {
+        event_queue.blocking_dispatch(&mut state)
+            .map_err(|e| format!("Dispatch error: {}", e))?;
+    }
+
+    if state.failed.load(Ordering::SeqCst) {
+        return Err("Screen capture failed".to_string());
+    }
+
+    // Memory map and copy data
+    let mmap = unsafe { MmapMut::map_mut(&file) }
+        .map_err(|e| format!("Failed to mmap: {}", e))?;
+
+    let data = mmap.to_vec();
+
+    // Pre-compute luminance for fast edge detection
+    let mut luminance = vec![0u8; (format.width * format.height) as usize];
+    for y in 0..format.height {
+        for x in 0..format.width {
+            let idx = (y * format.stride + x * 4) as usize;
+            if idx + 2 < data.len() {
+                let (r, g, b) = match format.format {
+                    wl_shm::Format::Argb8888 | wl_shm::Format::Xrgb8888 => {
+                        (data[idx + 2], data[idx + 1], data[idx])
+                    }
+                    wl_shm::Format::Xbgr8888 | wl_shm::Format::Abgr8888 => {
+                        (data[idx], data[idx + 1], data[idx + 2])
+                    }
+                    _ => (data[idx + 2], data[idx + 1], data[idx]),
+                };
+                luminance[(y * format.width + x) as usize] =
+                    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32) as u8;
+            }
+        }
+    }
+
+    // Clean up
+    buffer.destroy();
+    shm_pool.destroy();
+    frame.destroy();
+
+    Ok(Screenshot {
+        data,
+        width: format.width,
+        height: format.height,
+        stride: format.stride,
+        format: format.format,
+        luminance,
+    })
+}
+
+// ============================================================================
+// Edge Detection
+// ============================================================================
+
+#[derive(Debug, Clone, Copy)]
+struct Edges {
+    left: u32,
+    right: u32,
+    up: u32,
+    down: u32,
+}
+
+fn find_edges(screenshot: &Screenshot, cursor_x: u32, cursor_y: u32) -> Edges {
+    let width = screenshot.width;
+    let height = screenshot.height;
+
+    // Scan left from cursor
+    let left = scan_horizontal(screenshot, cursor_x, cursor_y, -1);
+    // Scan right from cursor
+    let right = scan_horizontal(screenshot, cursor_x, cursor_y, 1);
+    // Scan up from cursor
+    let up = scan_vertical(screenshot, cursor_x, cursor_y, -1);
+    // Scan down from cursor
+    let down = scan_vertical(screenshot, cursor_x, cursor_y, 1);
+
+    Edges {
+        left: left.unwrap_or(0),
+        right: right.unwrap_or(width.saturating_sub(1)),
+        up: up.unwrap_or(0),
+        down: down.unwrap_or(height.saturating_sub(1)),
+    }
+}
+
+fn scan_horizontal(screenshot: &Screenshot, start_x: u32, y: u32, direction: i32) -> Option<u32> {
+    let mut x = start_x as i32;
+    let mut prev_lum = screenshot.get_luminance(start_x, y) as i32;
+
+    loop {
+        x += direction;
+        if x < 0 || x >= screenshot.width as i32 {
+            return None;
+        }
+
+        let lum = screenshot.get_luminance(x as u32, y) as i32;
+        let diff = (lum - prev_lum).abs();
+
+        if diff > EDGE_THRESHOLD {
+            // Found an edge - return the position just before the edge
+            if direction < 0 {
+                return Some((x + 1) as u32);
+            } else {
+                return Some((x - 1) as u32);
+            }
+        }
+
+        prev_lum = lum;
+    }
+}
+
+fn scan_vertical(screenshot: &Screenshot, x: u32, start_y: u32, direction: i32) -> Option<u32> {
+    let mut y = start_y as i32;
+    let mut prev_lum = screenshot.get_luminance(x, start_y) as i32;
+
+    loop {
+        y += direction;
+        if y < 0 || y >= screenshot.height as i32 {
+            return None;
+        }
+
+        let lum = screenshot.get_luminance(x, y as u32) as i32;
+        let diff = (lum - prev_lum).abs();
+
+        if diff > EDGE_THRESHOLD {
+            // Found an edge - return the position just before the edge
+            if direction < 0 {
+                return Some((y + 1) as u32);
+            } else {
+                return Some((y - 1) as u32);
+            }
+        }
+
+        prev_lum = lum;
+    }
+}
+
+// ============================================================================
+// Main Application State
+// ============================================================================
 
 #[derive(Debug, Clone, Copy)]
 struct Point {
     x: f64,
     y: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MeasureDirection {
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Clone)]
-struct MeasureState {
-    start: Point,
-    end: Point,
-    direction: MeasureDirection,
 }
 
 struct PixelSnap {
@@ -67,16 +452,14 @@ struct PixelSnap {
     layer_shell: LayerShell,
 
     exit: bool,
-    width: u32,  // Logical width
-    height: u32, // Logical height
-    scale: i32,  // HiDPI scale factor
+    width: u32,
+    height: u32,
+    scale: i32,
     layer_surface: Option<LayerSurface>,
     pool: Option<SlotPool>,
 
     // Input state
     pointer_pos: Point,
-    dragging: bool,
-    measure: Option<MeasureState>,
 
     // Font for rendering
     font: Option<Arc<fontdue::Font>>,
@@ -84,6 +467,10 @@ struct PixelSnap {
     // Rendering optimization
     needs_redraw: bool,
     cached_pixmap: Option<Pixmap>,
+    background_rendered: bool, // Whether we've rendered the screenshot background
+
+    // Screenshot data for edge detection
+    screenshot: Screenshot,
 }
 
 impl PixelSnap {
@@ -94,6 +481,7 @@ impl PixelSnap {
         compositor_state: CompositorState,
         shm: Shm,
         layer_shell: LayerShell,
+        screenshot: Screenshot,
     ) -> Self {
         // Load a simple font for text rendering
         let font_data = include_bytes!("/usr/share/fonts/noto/NotoSans-Regular.ttf");
@@ -113,11 +501,11 @@ impl PixelSnap {
             layer_surface: None,
             pool: None,
             pointer_pos: Point { x: 0.0, y: 0.0 },
-            dragging: false,
-            measure: None,
             font: font.map(Arc::new),
             needs_redraw: true,
             cached_pixmap: None,
+            background_rendered: false,
+            screenshot,
         }
     }
 
@@ -133,34 +521,60 @@ impl PixelSnap {
         }
         self.needs_redraw = false;
 
-        // Physical pixel dimensions (for HiDPI)
-        let phys_width = self.width * self.scale as u32;
-        let phys_height = self.height * self.scale as u32;
+        // Screenshot is already at physical resolution from screencopy
+        // The overlay should match the screenshot dimensions
+        let phys_width = self.screenshot.width;
+        let phys_height = self.screenshot.height;
         let scale = self.scale as f32;
 
-        // Create or reuse pixmap at physical resolution
+        // Create or reuse pixmap at screenshot resolution
         let needs_new_pixmap = self.cached_pixmap.as_ref()
             .map(|p| p.width() != phys_width || p.height() != phys_height)
             .unwrap_or(true);
 
         if needs_new_pixmap {
             self.cached_pixmap = Pixmap::new(phys_width, phys_height);
+            self.background_rendered = false;
         }
+
+        // Get values we need before borrowing pixmap mutably
+        let pointer_pos = self.pointer_pos;
+        let screenshot = &self.screenshot;
+        let font = self.font.clone();
+        let needs_background = !self.background_rendered;
 
         let pixmap = self.cached_pixmap.as_mut().unwrap();
 
-        // Clear with subtle red tinted background
-        pixmap.fill(Color::from_rgba8(255, 0, 0, 12));
+        // Draw screenshot as background (only once, it's expensive)
+        if needs_background {
+            Self::draw_screenshot_background_static(pixmap, screenshot);
+        } else {
+            // Just restore the background by re-copying (faster than redrawing)
+            Self::draw_screenshot_background_static(pixmap, screenshot);
+        }
+        self.background_rendered = true;
 
-        // Draw measurement if we have one (scale coordinates for HiDPI)
-        if let Some(measure) = &self.measure {
-            Self::draw_measurement_static(pixmap, measure, self.font.as_ref(), scale);
+        // The pointer position is in logical coordinates, convert to physical
+        let cursor_phys_x = (pointer_pos.x * scale as f64) as u32;
+        let cursor_phys_y = (pointer_pos.y * scale as f64) as u32;
+
+        // Edge detection uses physical coordinates (screenshot is at physical resolution)
+        if cursor_phys_x < screenshot.width && cursor_phys_y < screenshot.height {
+            let edges = find_edges(screenshot, cursor_phys_x, cursor_phys_y);
+            // All drawing is at physical resolution now
+            Self::draw_measurements_static(pixmap, &edges, cursor_phys_x, cursor_phys_y, font.as_ref());
+            Self::draw_crosshair_static(pixmap, cursor_phys_x as f32, cursor_phys_y as f32);
         }
 
-        // Now get the pool and buffer
+        // Copy to wayland buffer
         let pool = self.pool.as_mut().unwrap();
         let stride = phys_width as i32 * 4;
         let size = (stride * phys_height as i32) as usize;
+
+        // Resize pool if needed
+        if pool.len() < size {
+            pool.resize(size).expect("Failed to resize pool");
+        }
 
         let (buffer, canvas) = pool
             .create_buffer(
@@ -172,7 +586,6 @@ impl PixelSnap {
             .expect("Failed to create buffer");
 
         // Copy pixmap data to wayland buffer (RGBA -> BGRA conversion)
-        // Use direct copy for speed
         let pixmap_data = self.cached_pixmap.as_ref().unwrap().data();
         for (i, chunk) in canvas[..size].chunks_exact_mut(4).enumerate() {
             let src_idx = i * 4;
@@ -185,67 +598,105 @@ impl PixelSnap {
         let layer_surface = self.layer_surface.as_ref().unwrap();
         let surface = layer_surface.wl_surface();
 
-        // Tell compositor about the buffer scale
         surface.set_buffer_scale(self.scale);
-
         buffer.attach_to(surface).expect("Failed to attach buffer");
         surface.damage_buffer(0, 0, phys_width as i32, phys_height as i32);
         surface.commit();
     }
 
-    fn request_redraw(&mut self) {
-        self.needs_redraw = true;
+    fn draw_screenshot_background_static(pixmap: &mut Pixmap, screenshot: &Screenshot) {
+        let width = pixmap.width();
+        let height = pixmap.height();
+        let pixels = pixmap.pixels_mut();
+
+        // Direct copy - pixmap and screenshot are same size (physical resolution)
+        for y in 0..height.min(screenshot.height) {
+            for x in 0..width.min(screenshot.width) {
+                let (r, g, b, a) = screenshot.get_pixel(x, y);
+                let idx = (y * width + x) as usize;
+                if idx < pixels.len() {
+                    if let Some(pixel) = PremultipliedColorU8::from_rgba(r, g, b, a) {
+                        pixels[idx] = pixel;
+                    }
+                }
+            }
+        }
     }
 
-    fn draw_measurement_static(pixmap: &mut Pixmap, measure: &MeasureState, font: Option<&Arc<fontdue::Font>>, scale: f32) {
+    fn draw_measurements_static(pixmap: &mut Pixmap, edges: &Edges, cursor_x: u32, cursor_y: u32, font: Option<&Arc<fontdue::Font>>) {
         let mut paint = Paint::default();
         paint.set_color(line_color());
         paint.anti_alias = true;
 
+        // Fixed line width (we're at physical resolution)
         let stroke = Stroke {
-            width: LINE_WIDTH * scale,
+            width: LINE_WIDTH * 2.0, // Slightly thicker for HiDPI
             ..Default::default()
         };
 
-        // Scale logical coordinates to physical pixels
-        let (x1, y1) = (measure.start.x as f32 * scale, measure.start.y as f32 * scale);
-        let (x2, y2) = (measure.end.x as f32 * scale, measure.end.y as f32 * scale);
+        // All coordinates are in physical pixels
+        let left = edges.left as f32;
+        let right = edges.right as f32;
+        let up = edges.up as f32;
+        let down = edges.down as f32;
 
-        // Draw main line
+        let cursor_x = cursor_x as f32;
+        let cursor_y = cursor_y as f32;
+
+        // Draw horizontal measurement line (left edge to right edge at cursor y)
         let mut pb = PathBuilder::new();
-        pb.move_to(x1, y1);
-        pb.line_to(x2, y2);
+        pb.move_to(left, cursor_y);
+        pb.line_to(right, cursor_y);
         if let Some(path) = pb.finish() {
             pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
 
-        // Draw end caps
-        match measure.direction {
-            MeasureDirection::Horizontal => {
-                Self::draw_end_cap(pixmap, &paint, &stroke, x1, y1, true, scale);
-                Self::draw_end_cap(pixmap, &paint, &stroke, x2, y2, true, scale);
-            }
-            MeasureDirection::Vertical => {
-                Self::draw_end_cap(pixmap, &paint, &stroke, x1, y1, false, scale);
-                Self::draw_end_cap(pixmap, &paint, &stroke, x2, y2, false, scale);
-            }
+        // Draw end caps for horizontal line
+        Self::draw_end_cap_static(pixmap, &paint, &stroke, left, cursor_y, true);
+        Self::draw_end_cap_static(pixmap, &paint, &stroke, right, cursor_y, true);
+
+        // Draw vertical measurement line (top edge to bottom edge at cursor x)
+        let mut pb = PathBuilder::new();
+        pb.move_to(cursor_x, up);
+        pb.line_to(cursor_x, down);
+        if let Some(path) = pb.finish() {
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
         }
 
-        // Calculate distance in LOGICAL pixels (what user cares about)
-        let distance = match measure.direction {
-            MeasureDirection::Horizontal => (measure.end.x - measure.start.x).abs(),
-            MeasureDirection::Vertical => (measure.end.y - measure.start.y).abs(),
-        };
+        // Draw end caps for vertical line
+        Self::draw_end_cap_static(pixmap, &paint, &stroke, cursor_x, up, false);
+        Self::draw_end_cap_static(pixmap, &paint, &stroke, cursor_x, down, false);
 
-        let label = format!("{}", distance.round() as i32);
-        let mid_x = (x1 + x2) / 2.0;
-        let mid_y = (y1 + y2) / 2.0;
+        // Calculate distances in physical pixels (edge-to-edge)
+        // For display, we show physical pixels since that's what the screenshot is
+        let h_distance = edges.right.saturating_sub(edges.left);
+        let v_distance = edges.down.saturating_sub(edges.up);
 
-        Self::draw_label(pixmap, &label, mid_x, mid_y, measure.direction, font, scale);
+        // Draw labels
+        let h_mid_x = (left + right) / 2.0;
+        let v_mid_y = (up + down) / 2.0;
+
+        // Horizontal distance label (above the line)
+        Self::draw_label_impl(
+            pixmap,
+            &format!("{}", h_distance),
+            h_mid_x,
+            cursor_y - 30.0,
+            font,
+        );
+
+        // Vertical distance label (to the right of the line)
+        Self::draw_label_impl(
+            pixmap,
+            &format!("{}", v_distance),
+            cursor_x + 30.0,
+            v_mid_y,
+            font,
+        );
     }
 
-    fn draw_end_cap(pixmap: &mut Pixmap, paint: &Paint, stroke: &Stroke, x: f32, y: f32, vertical: bool, scale: f32) {
-        let cap_size = END_CAP_SIZE * scale;
+    fn draw_end_cap_static(pixmap: &mut Pixmap, paint: &Paint, stroke: &Stroke, x: f32, y: f32, vertical: bool) {
+        let cap_size = END_CAP_SIZE * 2.0; // Slightly larger for HiDPI
         let mut pb = PathBuilder::new();
         if vertical {
             pb.move_to(x, y - cap_size / 2.0);
@@ -259,52 +710,72 @@ impl PixelSnap {
         }
     }
 
-    fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, direction: MeasureDirection, font: Option<&Arc<fontdue::Font>>, scale: f32) {
-        let font_size = 14.0 * scale;
-        let padding_x = 8.0 * scale;
-        let padding_y = 4.0 * scale;
+    fn draw_crosshair_static(pixmap: &mut Pixmap, x: f32, y: f32) {
+        let mut paint = Paint::default();
+        paint.set_color(line_color());
+        paint.anti_alias = true;
 
-        // Calculate text dimensions
+        let stroke = Stroke {
+            width: 2.0, // Fixed for HiDPI
+            ..Default::default()
+        };
+
+        let size = 15.0; // Fixed for HiDPI
+
+        // Horizontal part of crosshair
+        let mut pb = PathBuilder::new();
+        pb.move_to(x - size, y);
+        pb.line_to(x + size, y);
+        if let Some(path) = pb.finish() {
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
+
+        // Vertical part of crosshair
+        let mut pb = PathBuilder::new();
+        pb.move_to(x, y - size);
+        pb.line_to(x, y + size);
+        if let Some(path) = pb.finish() {
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        }
+    }
+
+    fn draw_label_impl(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&Arc<fontdue::Font>>) {
+        let font_size = 24.0; // Fixed for HiDPI
+        let padding_x = 12.0;
+        let padding_y = 6.0;
+
         let text_width = text.len() as f32 * font_size * 0.6;
         let text_height = font_size;
 
         let label_width = text_width + padding_x * 2.0;
         let label_height = text_height + padding_y * 2.0;
 
-        // Position label offset from the line
-        let offset = 12.0 * scale;
-        let (label_x, label_y) = match direction {
-            MeasureDirection::Horizontal => (x - label_width / 2.0, y - label_height - offset),
-            MeasureDirection::Vertical => (x + offset, y - label_height / 2.0),
-        };
+        let label_x = x - label_width / 2.0;
+        let label_y = y - label_height / 2.0;
 
         // Draw rounded rectangle background
-        let rect = Rect::from_xywh(label_x, label_y, label_width, label_height);
-        if let Some(_rect) = rect {
-            let mut bg_paint = Paint::default();
-            bg_paint.set_color(label_bg_color());
-            bg_paint.anti_alias = true;
+        let mut bg_paint = Paint::default();
+        bg_paint.set_color(label_bg_color());
+        bg_paint.anti_alias = true;
 
-            // Draw rounded rect using path
-            let radius = 4.0 * scale;
-            let mut pb = PathBuilder::new();
-            pb.move_to(label_x + radius, label_y);
-            pb.line_to(label_x + label_width - radius, label_y);
-            pb.quad_to(label_x + label_width, label_y, label_x + label_width, label_y + radius);
-            pb.line_to(label_x + label_width, label_y + label_height - radius);
-            pb.quad_to(label_x + label_width, label_y + label_height, label_x + label_width - radius, label_y + label_height);
-            pb.line_to(label_x + radius, label_y + label_height);
-            pb.quad_to(label_x, label_y + label_height, label_x, label_y + label_height - radius);
-            pb.line_to(label_x, label_y + radius);
-            pb.quad_to(label_x, label_y, label_x + radius, label_y);
-            pb.close();
+        let radius = 6.0;
+        let mut pb = PathBuilder::new();
+        pb.move_to(label_x + radius, label_y);
+        pb.line_to(label_x + label_width - radius, label_y);
+        pb.quad_to(label_x + label_width, label_y, label_x + label_width, label_y + radius);
+        pb.line_to(label_x + label_width, label_y + label_height - radius);
+        pb.quad_to(label_x + label_width, label_y + label_height, label_x + label_width - radius, label_y + label_height);
+        pb.line_to(label_x + radius, label_y + label_height);
+        pb.quad_to(label_x, label_y + label_height, label_x, label_y + label_height - radius);
+        pb.line_to(label_x, label_y + radius);
+        pb.quad_to(label_x, label_y, label_x + radius, label_y);
+        pb.close();
 
-            if let Some(path) = pb.finish() {
-                pixmap.fill_path(&path, &bg_paint, FillRule::Winding, Transform::identity(), None);
-            }
+        if let Some(path) = pb.finish() {
+            pixmap.fill_path(&path, &bg_paint, FillRule::Winding, Transform::identity(), None);
         }
 
-        // Draw text using fontdue if available
+        // Draw text
         if let Some(font) = font {
             let mut cursor_x = label_x + padding_x;
             let baseline_y = label_y + padding_y + font_size * 0.8;
@@ -331,7 +802,6 @@ impl PixelSnap {
                                     if idx < pixels.len() {
                                         let pixel = &pixels[idx];
                                         let a = alpha as f32 / 255.0;
-                                        // Blend white text onto existing pixel
                                         let bg_r = pixel.red() as f32;
                                         let bg_g = pixel.green() as f32;
                                         let bg_b = pixel.blue() as f32;
@@ -342,7 +812,6 @@ impl PixelSnap {
                                         let b = ((1.0 - a) * bg_b + a * 255.0) as u8;
                                         let new_a = ((1.0 - a) * bg_a + a * 255.0) as u8;
 
-                                        // For premultiplied alpha, RGB must be <= A
                                         let r = r.min(new_a);
                                         let g = g.min(new_a);
                                         let b = b.min(new_a);
@@ -362,26 +831,8 @@ impl PixelSnap {
         }
     }
 
-    fn update_measurement(&mut self, current_pos: Point) {
-        if let Some(ref mut measure) = self.measure {
-            let dx = (current_pos.x - measure.start.x).abs();
-            let dy = (current_pos.y - measure.start.y).abs();
-
-            // Constrain to horizontal or vertical based on larger delta
-            if dx > dy {
-                measure.direction = MeasureDirection::Horizontal;
-                measure.end = Point {
-                    x: current_pos.x,
-                    y: measure.start.y,
-                };
-            } else {
-                measure.direction = MeasureDirection::Vertical;
-                measure.end = Point {
-                    x: measure.start.x,
-                    y: current_pos.y,
-                };
-            }
-        }
+    fn request_redraw(&mut self) {
+        self.needs_redraw = true;
     }
 }
 
@@ -395,7 +846,6 @@ impl CompositorHandler for PixelSnap {
     ) {
         if self.scale != new_factor {
             self.scale = new_factor;
-            // Invalidate cached pixmap since dimensions changed
             self.cached_pixmap = None;
             self.request_redraw();
         }
@@ -485,7 +935,6 @@ impl LayerShellHandler for PixelSnap {
         self.width = configure.new_size.0;
         self.height = configure.new_size.1;
 
-        // Calculate physical size for the buffer pool (account for HiDPI)
         let phys_width = self.width * self.scale as u32;
         let phys_height = self.height * self.scale as u32;
         let pool_size = (phys_width * phys_height * 4) as usize;
@@ -516,10 +965,8 @@ impl SeatHandler for PixelSnap {
         capability: Capability,
     ) {
         if capability == Capability::Keyboard && self.seat_state.get_keyboard(qh, &seat, None).is_err() {
-            // Keyboard capability added
         }
         if capability == Capability::Pointer && self.seat_state.get_pointer(qh, &seat).is_err() {
-            // Pointer capability added
         }
     }
 
@@ -608,33 +1055,13 @@ impl PointerHandler for PixelSnap {
                         x: event.position.0,
                         y: event.position.1,
                     };
-
-                    if self.dragging {
-                        self.update_measurement(self.pointer_pos);
-                        self.request_redraw();
-                        self.draw(qh);
-                    }
+                    self.request_redraw();
+                    self.draw(qh);
                 }
                 PointerEventKind::Press { button, .. } => {
                     if button == 272 {
-                        // Left mouse button
-                        if self.measure.is_some() && !self.dragging {
-                            // Second click exits
-                            self.exit = true;
-                        } else {
-                            self.dragging = true;
-                            self.measure = Some(MeasureState {
-                                start: self.pointer_pos,
-                                end: self.pointer_pos,
-                                direction: MeasureDirection::Horizontal,
-                            });
-                        }
-                    }
-                }
-                PointerEventKind::Release { button, .. } => {
-                    if button == 272 {
-                        // Left mouse button
-                        self.dragging = false;
+                        // Left click exits
+                        self.exit = true;
                     }
                 }
                 _ => {}
@@ -667,6 +1094,21 @@ delegate_registry!(PixelSnap);
 
 fn main() {
     let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
+
+    // Capture screen FIRST, before creating overlay
+    eprintln!("Capturing screen...");
+    let screenshot = match capture_screen(&conn) {
+        Ok(s) => {
+            eprintln!("Captured {}x{} screenshot", s.width, s.height);
+            s
+        }
+        Err(e) => {
+            eprintln!("Failed to capture screen: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Now set up the overlay
     let (globals, mut event_queue) = registry_queue_init(&conn).expect("Failed to init registry");
     let qh = event_queue.handle();
 
@@ -685,6 +1127,7 @@ fn main() {
         compositor_state,
         shm,
         layer_shell,
+        screenshot,
     );
 
     // Create layer surface

@@ -6,5 +6,8 @@ edition = "2021"
 [dependencies]
 smithay-client-toolkit = "0.19"
 wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 tiny-skia = "0.11"
 fontdue = "0.8"
+memmap2 = "0.9"
+rustix = { version = "1.0", features = ["fs", "shm"] }
