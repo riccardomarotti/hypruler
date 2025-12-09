@@ -1,7 +1,9 @@
 use crate::capture::Screenshot;
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform};
+use tiny_skia::{
+    Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Stroke, Transform,
+};
 
-const LINE_WIDTH: f32 = 4.0;
+const LINE_WIDTH: f32 = 2.0;
 const END_CAP_SIZE: f32 = 16.0;
 const CROSSHAIR_SIZE: f32 = 15.0;
 const EDGE_THRESHOLD: i32 = 25;
@@ -18,7 +20,15 @@ fn label_bg_color() -> Color {
     Color::from_rgba8(40, 40, 40, 230)
 }
 
-fn stroke_line(pixmap: &mut Pixmap, paint: &Paint, stroke: &Stroke, x1: f32, y1: f32, x2: f32, y2: f32) {
+fn stroke_line(
+    pixmap: &mut Pixmap,
+    paint: &Paint,
+    stroke: &Stroke,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+) {
     let mut pb = PathBuilder::new();
     pb.move_to(x1, y1);
     pb.line_to(x2, y2);
@@ -56,7 +66,11 @@ fn scan_horizontal(screenshot: &Screenshot, start_x: u32, y: u32, direction: i32
 
         let lum = screenshot.get_luminance(x as u32, y) as i32;
         if (lum - prev_lum).abs() > EDGE_THRESHOLD {
-            return Some(if direction < 0 { (x + 1) as u32 } else { (x - 1) as u32 });
+            return Some(if direction < 0 {
+                (x + 1) as u32
+            } else {
+                (x - 1) as u32
+            });
         }
         prev_lum = lum;
     }
@@ -74,7 +88,11 @@ fn scan_vertical(screenshot: &Screenshot, x: u32, start_y: u32, direction: i32) 
 
         let lum = screenshot.get_luminance(x, y as u32) as i32;
         if (lum - prev_lum).abs() > EDGE_THRESHOLD {
-            return Some(if direction < 0 { (y + 1) as u32 } else { (y - 1) as u32 });
+            return Some(if direction < 0 {
+                (y + 1) as u32
+            } else {
+                (y - 1) as u32
+            });
         }
         prev_lum = lum;
     }
@@ -125,7 +143,14 @@ pub fn draw_measurements(
     );
 }
 
-fn draw_end_cap(pixmap: &mut Pixmap, paint: &Paint, stroke: &Stroke, x: f32, y: f32, vertical: bool) {
+fn draw_end_cap(
+    pixmap: &mut Pixmap,
+    paint: &Paint,
+    stroke: &Stroke,
+    x: f32,
+    y: f32,
+    vertical: bool,
+) {
     let half = END_CAP_SIZE / 2.0;
     if vertical {
         stroke_line(pixmap, paint, stroke, x, y - half, x, y + half);
@@ -144,8 +169,24 @@ pub fn draw_crosshair(pixmap: &mut Pixmap, x: f32, y: f32) {
         ..Default::default()
     };
 
-    stroke_line(pixmap, &paint, &stroke, x - CROSSHAIR_SIZE, y, x + CROSSHAIR_SIZE, y);
-    stroke_line(pixmap, &paint, &stroke, x, y - CROSSHAIR_SIZE, x, y + CROSSHAIR_SIZE);
+    stroke_line(
+        pixmap,
+        &paint,
+        &stroke,
+        x - CROSSHAIR_SIZE,
+        y,
+        x + CROSSHAIR_SIZE,
+        y,
+    );
+    stroke_line(
+        pixmap,
+        &paint,
+        &stroke,
+        x,
+        y - CROSSHAIR_SIZE,
+        x,
+        y + CROSSHAIR_SIZE,
+    );
 }
 
 fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fontdue::Font>) {
@@ -167,17 +208,38 @@ fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fon
     let mut pb = PathBuilder::new();
     pb.move_to(label_x + r, label_y);
     pb.line_to(label_x + label_width - r, label_y);
-    pb.quad_to(label_x + label_width, label_y, label_x + label_width, label_y + r);
+    pb.quad_to(
+        label_x + label_width,
+        label_y,
+        label_x + label_width,
+        label_y + r,
+    );
     pb.line_to(label_x + label_width, label_y + label_height - r);
-    pb.quad_to(label_x + label_width, label_y + label_height, label_x + label_width - r, label_y + label_height);
+    pb.quad_to(
+        label_x + label_width,
+        label_y + label_height,
+        label_x + label_width - r,
+        label_y + label_height,
+    );
     pb.line_to(label_x + r, label_y + label_height);
-    pb.quad_to(label_x, label_y + label_height, label_x, label_y + label_height - r);
+    pb.quad_to(
+        label_x,
+        label_y + label_height,
+        label_x,
+        label_y + label_height - r,
+    );
     pb.line_to(label_x, label_y + r);
     pb.quad_to(label_x, label_y, label_x + r, label_y);
     pb.close();
 
     if let Some(path) = pb.finish() {
-        pixmap.fill_path(&path, &bg_paint, FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(
+            &path,
+            &bg_paint,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 
     // Render text
@@ -209,9 +271,12 @@ fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fon
                     if idx < pixels.len() {
                         let pixel = &pixels[idx];
                         let a = alpha as f32 / 255.0;
-                        let r = ((1.0 - a) * pixel.red() as f32 + a * 255.0).min(pixel.alpha() as f32) as u8;
-                        let g = ((1.0 - a) * pixel.green() as f32 + a * 255.0).min(pixel.alpha() as f32) as u8;
-                        let b = ((1.0 - a) * pixel.blue() as f32 + a * 255.0).min(pixel.alpha() as f32) as u8;
+                        let r = ((1.0 - a) * pixel.red() as f32 + a * 255.0)
+                            .min(pixel.alpha() as f32) as u8;
+                        let g = ((1.0 - a) * pixel.green() as f32 + a * 255.0)
+                            .min(pixel.alpha() as f32) as u8;
+                        let b = ((1.0 - a) * pixel.blue() as f32 + a * 255.0)
+                            .min(pixel.alpha() as f32) as u8;
                         let new_a = ((1.0 - a) * pixel.alpha() as f32 + a * 255.0) as u8;
 
                         if let Some(new_pixel) = PremultipliedColorU8::from_rgba(r, g, b, new_a) {

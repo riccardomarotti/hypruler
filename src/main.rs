@@ -12,7 +12,9 @@ use smithay_client_toolkit::{
     registry_handlers,
     seat::{
         keyboard::{KeyEvent, KeyboardHandler, Keysym, Modifiers},
-        pointer::{cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{
+            cursor_shape::CursorShapeManager, PointerEvent, PointerEventKind, PointerHandler,
+        },
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -72,7 +74,8 @@ impl PixelSnap {
         cursor_shape_manager: Option<CursorShapeManager>,
     ) -> Self {
         let font_data = include_bytes!("/usr/share/fonts/noto/NotoSans-Regular.ttf");
-        let font = fontdue::Font::from_bytes(font_data as &[u8], fontdue::FontSettings::default()).ok();
+        let font =
+            fontdue::Font::from_bytes(font_data as &[u8], fontdue::FontSettings::default()).ok();
 
         Self {
             registry_state,
@@ -123,7 +126,12 @@ impl PixelSnap {
         }
 
         let (buffer, canvas) = pool
-            .create_buffer(phys_width as i32, phys_height as i32, stride, wl_shm::Format::Argb8888)
+            .create_buffer(
+                phys_width as i32,
+                phys_height as i32,
+                stride,
+                wl_shm::Format::Argb8888,
+            )
             .expect("Failed to create buffer");
 
         // Copy pre-converted BGRA background
@@ -132,7 +140,8 @@ impl PixelSnap {
 
         // Draw overlay
         if cursor_phys_x < self.screenshot.width && cursor_phys_y < self.screenshot.height {
-            let needs_new_pixmap = self.cached_pixmap
+            let needs_new_pixmap = self
+                .cached_pixmap
                 .as_ref()
                 .map(|p| p.width() != phys_width || p.height() != phys_height)
                 .unwrap_or(true);
@@ -145,7 +154,13 @@ impl PixelSnap {
             pixmap.fill(tiny_skia::Color::TRANSPARENT);
 
             let edges = find_edges(&self.screenshot, cursor_phys_x, cursor_phys_y);
-            draw_measurements(pixmap, &edges, cursor_phys_x, cursor_phys_y, self.font.as_ref());
+            draw_measurements(
+                pixmap,
+                &edges,
+                cursor_phys_x,
+                cursor_phys_y,
+                self.font.as_ref(),
+            );
             draw_crosshair(pixmap, cursor_phys_x as f32, cursor_phys_y as f32);
 
             // Composite overlay onto canvas
@@ -203,14 +218,29 @@ impl CompositorHandler for PixelSnap {
         _: &QueueHandle<Self>,
         _: &wl_surface::WlSurface,
         _: wl_output::Transform,
-    ) {}
+    ) {
+    }
 
     fn frame(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {
         self.draw(qh);
     }
 
-    fn surface_enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
-    fn surface_leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: &wl_output::WlOutput) {}
+    fn surface_enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
+    fn surface_leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_surface::WlSurface,
+        _: &wl_output::WlOutput,
+    ) {
+    }
 }
 
 impl OutputHandler for PixelSnap {
@@ -278,20 +308,69 @@ impl SeatHandler for PixelSnap {
         }
     }
 
-    fn remove_capability(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat, _: Capability) {}
+    fn remove_capability(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: wl_seat::WlSeat,
+        _: Capability,
+    ) {
+    }
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
 }
 
 impl KeyboardHandler for PixelSnap {
-    fn enter(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32, _: &[u32], _: &[Keysym]) {}
-    fn leave(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: &wl_surface::WlSurface, _: u32) {}
+    fn enter(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+        _: &[u32],
+        _: &[Keysym],
+    ) {
+    }
+    fn leave(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+    }
 
-    fn press_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {
+    fn press_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: KeyEvent,
+    ) {
         self.exit = true;
     }
 
-    fn release_key(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: KeyEvent) {}
-    fn update_modifiers(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_keyboard::WlKeyboard, _: u32, _: Modifiers, _: u32) {}
+    fn release_key(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: KeyEvent,
+    ) {
+    }
+    fn update_modifiers(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &wl_keyboard::WlKeyboard,
+        _: u32,
+        _: Modifiers,
+        _: u32,
+    ) {
+    }
 }
 
 impl PointerHandler for PixelSnap {
@@ -354,11 +433,11 @@ fn main() {
         Err(_) => std::process::exit(1),
     };
 
-    let (globals, mut event_queue) = registry_queue_init(&conn)
-        .expect("Failed to init registry");
+    let (globals, mut event_queue) = registry_queue_init(&conn).expect("Failed to init registry");
     let qh = event_queue.handle();
 
-    let compositor_state = CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
+    let compositor_state =
+        CompositorState::bind(&globals, &qh).expect("wl_compositor not available");
     let layer_shell = LayerShell::bind(&globals, &qh).expect("layer shell not available");
     let shm = Shm::bind(&globals, &qh).expect("wl_shm not available");
     let seat_state = SeatState::new(&globals, &qh);
