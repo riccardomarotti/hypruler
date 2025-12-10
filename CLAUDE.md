@@ -24,6 +24,7 @@ src/
 ```
 
 - **Screen capture** at physical resolution (e.g., 2880x1920 for HiDPI)
+- **HiDPI support**: Dimensions are displayed in logical pixels (physical pixels ÷ scale factor)
 - **Pre-computed data** at startup:
   - `luminance[]` - grayscale values for edge detection
   - `bgra_data[]` - screenshot pre-converted to Wayland's buffer format

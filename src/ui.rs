@@ -64,6 +64,7 @@ pub fn draw_measurements(
     cursor_x: u32,
     cursor_y: u32,
     font: Option<&fontdue::Font>,
+    scale: i32,
 ) {
     let mut paint = Paint::default();
     paint.set_color(line_color());
@@ -91,9 +92,9 @@ pub fn draw_measurements(
     draw_end_cap(pixmap, &paint, &stroke, cx, up, false);
     draw_end_cap(pixmap, &paint, &stroke, cx, down, false);
 
-    // Dimension label
-    let h_distance = edges.right.saturating_sub(edges.left);
-    let v_distance = edges.down.saturating_sub(edges.up);
+    // Dimension label (convert physical pixels to logical pixels)
+    let h_distance = edges.right.saturating_sub(edges.left) / scale as u32;
+    let v_distance = edges.down.saturating_sub(edges.up) / scale as u32;
     let (lx, ly) = get_label_position(cx, cy, pixmap.width(), pixmap.height());
     draw_label(
         pixmap,
@@ -111,6 +112,7 @@ pub fn draw_rectangle_measurement(
     x2: u32,
     y2: u32,
     font: Option<&fontdue::Font>,
+    scale: i32,
 ) {
     let left = x1 as f32;
     let top = y1 as f32;
@@ -157,10 +159,13 @@ pub fn draw_rectangle_measurement(
     // Right edge
     stroke_line(pixmap, &stroke_paint, &stroke, right, top, right, bottom);
 
-    // Draw dimension label (add 1 because pixel coordinates are inclusive)
-    let width = x2.saturating_sub(x1) + 1;
-    let height = y2.saturating_sub(y1) + 1;
-    let (lx, ly) = if width >= 150 && height >= 50 {
+    // Draw dimension label (convert physical pixels to logical pixels)
+    let width = (x2.saturating_sub(x1) + 1) / scale as u32;
+    let height = (y2.saturating_sub(y1) + 1) / scale as u32;
+    // Use physical pixel sizes for layout threshold check
+    let phys_width = x2.saturating_sub(x1) + 1;
+    let phys_height = y2.saturating_sub(y1) + 1;
+    let (lx, ly) = if phys_width >= 150 && phys_height >= 50 {
         // Center on rectangle if large enough
         ((left + right) / 2.0, (top + bottom) / 2.0)
     } else {
