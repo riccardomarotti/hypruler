@@ -24,7 +24,7 @@ release version:
     echo "Updated version: $current → {{version}}"
   fi
 
-  git add Cargo.toml
+  git add Cargo.toml Cargo.lock
   git commit -m "Version {{version}}" || echo "Nothing to commit"
   git tag -a "v{{version}}" -m "Version {{version}}"
   echo "Tagged v{{version}}"
