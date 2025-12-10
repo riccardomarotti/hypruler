@@ -9,7 +9,7 @@ license=('MIT')
 depends=('fontconfig')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/t4t5/hypruler/archive/v$pkgver.tar.gz")
-sha256sums=('CHECKSUM_PLACEHOLDER')
+sha256sums=('SKIP')
 
 build() {
     cd "$pkgname-$pkgver"
