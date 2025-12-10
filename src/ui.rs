@@ -93,8 +93,9 @@ pub fn draw_measurements(
     draw_end_cap(pixmap, &paint, &stroke, cx, down, false);
 
     // Dimension label (convert physical pixels to logical pixels)
-    let h_distance = edges.right.saturating_sub(edges.left) / scale as u32;
-    let v_distance = edges.down.saturating_sub(edges.up) / scale as u32;
+    // Add 1 because distance from pixel N to pixel M is M - N + 1 pixels
+    let h_distance = (edges.right.saturating_sub(edges.left) + 1) / scale as u32;
+    let v_distance = (edges.down.saturating_sub(edges.up) + 1) / scale as u32;
     let (lx, ly) = get_label_position(cx, cy, pixmap.width(), pixmap.height());
     draw_label(
         pixmap,
