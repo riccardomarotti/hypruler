@@ -189,70 +189,51 @@ pub fn draw_crosshair(pixmap: &mut Pixmap, x: f32, y: f32) {
     );
 }
 
-fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fontdue::Font>) {
-    let text_width = text.len() as f32 * FONT_SIZE * 0.6;
-    let text_height = FONT_SIZE;
+fn draw_rounded_rect(pixmap: &mut Pixmap, x: f32, y: f32, width: f32, height: f32, radius: f32) {
+    let mut paint = Paint::default();
+    paint.set_color(label_bg_color());
+    paint.anti_alias = true;
 
-    let label_width = text_width + LABEL_PADDING.0 * 2.0;
-    let label_height = text_height + LABEL_PADDING.1 * 2.0;
-
-    let label_x = x - label_width / 2.0;
-    let label_y = y - label_height / 2.0;
-
-    // Rounded rectangle background
-    let mut bg_paint = Paint::default();
-    bg_paint.set_color(label_bg_color());
-    bg_paint.anti_alias = true;
-
-    let r = LABEL_RADIUS;
     let mut pb = PathBuilder::new();
-    pb.move_to(label_x + r, label_y);
-    pb.line_to(label_x + label_width - r, label_y);
-    pb.quad_to(
-        label_x + label_width,
-        label_y,
-        label_x + label_width,
-        label_y + r,
-    );
-    pb.line_to(label_x + label_width, label_y + label_height - r);
-    pb.quad_to(
-        label_x + label_width,
-        label_y + label_height,
-        label_x + label_width - r,
-        label_y + label_height,
-    );
-    pb.line_to(label_x + r, label_y + label_height);
-    pb.quad_to(
-        label_x,
-        label_y + label_height,
-        label_x,
-        label_y + label_height - r,
-    );
-    pb.line_to(label_x, label_y + r);
-    pb.quad_to(label_x, label_y, label_x + r, label_y);
+    pb.move_to(x + radius, y);
+    pb.line_to(x + width - radius, y);
+    pb.quad_to(x + width, y, x + width, y + radius);
+    pb.line_to(x + width, y + height - radius);
+    pb.quad_to(x + width, y + height, x + width - radius, y + height);
+    pb.line_to(x + radius, y + height);
+    pb.quad_to(x, y + height, x, y + height - radius);
+    pb.line_to(x, y + radius);
+    pb.quad_to(x, y, x + radius, y);
     pb.close();
 
     if let Some(path) = pb.finish() {
         pixmap.fill_path(
             &path,
-            &bg_paint,
+            &paint,
             FillRule::Winding,
             Transform::identity(),
             None,
         );
     }
+}
 
-    // Render text
-    let Some(font) = font else { return };
+fn blend_pixel(pixel: &PremultipliedColorU8, alpha: f32) -> Option<PremultipliedColorU8> {
+    let inv_a = 1.0 - alpha;
+    let max_val = pixel.alpha() as f32;
+    PremultipliedColorU8::from_rgba(
+        ((inv_a * pixel.red() as f32 + alpha * 255.0).min(max_val)) as u8,
+        ((inv_a * pixel.green() as f32 + alpha * 255.0).min(max_val)) as u8,
+        ((inv_a * pixel.blue() as f32 + alpha * 255.0).min(max_val)) as u8,
+        (inv_a * pixel.alpha() as f32 + alpha * 255.0) as u8,
+    )
+}
 
-    let mut cursor_x = label_x + LABEL_PADDING.0;
-    let baseline_y = label_y + LABEL_PADDING.1 + FONT_SIZE * 0.8;
-
-    let pixmap_width = pixmap.width() as i32;
-    let pixmap_height = pixmap.height() as i32;
-    let width = pixmap_width as usize;
+fn draw_text(pixmap: &mut Pixmap, font: &fontdue::Font, text: &str, start_x: f32, baseline_y: f32) {
+    let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
+    let stride = width as usize;
     let pixels = pixmap.pixels_mut();
 
+    let mut cursor_x = start_x;
     for c in text.chars() {
         let (metrics, bitmap) = font.rasterize(c, FONT_SIZE);
 
@@ -266,27 +247,39 @@ fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fon
                 let draw_x = cursor_x as i32 + px as i32 + metrics.xmin;
                 let draw_y = baseline_y as i32 + py as i32 - metrics.height as i32 - metrics.ymin;
 
-                if draw_x >= 0 && draw_x < pixmap_width && draw_y >= 0 && draw_y < pixmap_height {
-                    let idx = draw_y as usize * width + draw_x as usize;
-                    if idx < pixels.len() {
-                        let pixel = &pixels[idx];
-                        let a = alpha as f32 / 255.0;
-                        let r = ((1.0 - a) * pixel.red() as f32 + a * 255.0)
-                            .min(pixel.alpha() as f32) as u8;
-                        let g = ((1.0 - a) * pixel.green() as f32 + a * 255.0)
-                            .min(pixel.alpha() as f32) as u8;
-                        let b = ((1.0 - a) * pixel.blue() as f32 + a * 255.0)
-                            .min(pixel.alpha() as f32) as u8;
-                        let new_a = ((1.0 - a) * pixel.alpha() as f32 + a * 255.0) as u8;
+                if draw_x < 0 || draw_x >= width || draw_y < 0 || draw_y >= height {
+                    continue;
+                }
 
-                        if let Some(new_pixel) = PremultipliedColorU8::from_rgba(r, g, b, new_a) {
-                            pixels[idx] = new_pixel;
-                        }
-                    }
+                let idx = draw_y as usize * stride + draw_x as usize;
+                if let Some(new_pixel) = blend_pixel(&pixels[idx], alpha as f32 / 255.0) {
+                    pixels[idx] = new_pixel;
                 }
             }
         }
-
         cursor_x += metrics.advance_width;
+    }
+}
+
+fn draw_label(pixmap: &mut Pixmap, text: &str, x: f32, y: f32, font: Option<&fontdue::Font>) {
+    let text_width = text.len() as f32 * FONT_SIZE * 0.6;
+    let label_width = text_width + LABEL_PADDING.0 * 2.0;
+    let label_height = FONT_SIZE + LABEL_PADDING.1 * 2.0;
+    let label_x = x - label_width / 2.0;
+    let label_y = y - label_height / 2.0;
+
+    draw_rounded_rect(
+        pixmap,
+        label_x,
+        label_y,
+        label_width,
+        label_height,
+        LABEL_RADIUS,
+    );
+
+    if let Some(font) = font {
+        let text_x = label_x + LABEL_PADDING.0;
+        let baseline_y = label_y + LABEL_PADDING.1 + FONT_SIZE * 0.8;
+        draw_text(pixmap, font, text, text_x, baseline_y);
     }
 }
