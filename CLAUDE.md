@@ -38,8 +38,9 @@ src/
    ```
 2. Move cursor to measure between detected edges (auto mode)
 3. Click and drag to draw a custom measurement rectangle (manual mode)
-4. Dimensions shown as `{width} x {height}` near cursor or centered on rectangle
-5. Press any key to exit
+4. Click without dragging to clear the rectangle
+5. Dimensions shown as `{width} x {height}` near cursor or centered on rectangle
+6. Press any key to exit
 
 ## Building
 

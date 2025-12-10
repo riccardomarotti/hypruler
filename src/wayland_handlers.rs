@@ -477,14 +477,21 @@ impl PointerHandler for WaylandApp {
                     self.draw(qh);
                 }
                 PointerEventKind::Release { button: 272, .. } => {
-                    // End drag - finalize rectangle
+                    // End drag - finalize rectangle only if it has size
                     if let Some((start_x, start_y)) = self.drag_start {
                         let scale = self.scale as f64;
                         let x1 = (start_x * scale) as u32;
                         let y1 = (start_y * scale) as u32;
                         let x2 = (self.pointer_x * scale) as u32;
                         let y2 = (self.pointer_y * scale) as u32;
-                        self.drag_rect = Some((x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)));
+                        let width = x1.abs_diff(x2);
+                        let height = y1.abs_diff(y2);
+                        if width > 0 && height > 0 {
+                            self.drag_rect = Some((x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2)));
+                        } else {
+                            // Click without drag - clear rectangle
+                            self.drag_rect = None;
+                        }
                     }
                     self.is_dragging = false;
                     self.needs_redraw = true;
