@@ -82,6 +82,14 @@ pub struct WaylandApp {
     exit: bool,
 }
 
+fn normalize_rect(x1: u32, y1: u32, x2: u32, y2: u32) -> (u32, u32, u32, u32) {
+    (x1.min(x2), y1.min(y2), x1.max(x2), y1.max(y2))
+}
+
+fn to_physical(logical: f64, scale: i32) -> u32 {
+    (logical * scale as f64) as u32
+}
+
 impl WaylandApp {
     pub fn new(conn: &Connection, screenshot: Screenshot) -> (Self, EventQueue<Self>) {
         let (globals, event_queue) = registry_queue_init(conn).expect("Failed to init registry");
@@ -162,10 +170,9 @@ impl WaylandApp {
 
         let phys_width = self.screenshot.width;
         let phys_height = self.screenshot.height;
-        let scale = self.scale as f32;
 
-        let cursor_phys_x = (self.pointer_x * scale as f64) as u32;
-        let cursor_phys_y = (self.pointer_y * scale as f64) as u32;
+        let cursor_phys_x = to_physical(self.pointer_x, self.scale);
+        let cursor_phys_y = to_physical(self.pointer_y, self.scale);
 
         let pool = self.pool.as_mut().unwrap();
         let stride = phys_width as i32 * 4;
@@ -185,8 +192,9 @@ impl WaylandApp {
             .expect("Failed to create buffer");
 
         // Copy pre-converted BGRA background
-        let bgra_size = self.screenshot.bgra_data.len().min(size);
-        canvas[..bgra_size].copy_from_slice(&self.screenshot.bgra_data[..bgra_size]);
+        let bgra = self.screenshot.bgra_data();
+        let bgra_size = bgra.len().min(size);
+        canvas[..bgra_size].copy_from_slice(&bgra[..bgra_size]);
 
         // Draw overlay
         let needs_new_pixmap = self
@@ -205,19 +213,13 @@ impl WaylandApp {
         if self.is_dragging {
             // Draw rectangle from drag start to current cursor
             if let Some((start_x, start_y)) = self.drag_start {
-                let x1 = (start_x * scale as f64) as u32;
-                let y1 = (start_y * scale as f64) as u32;
-                let x2 = cursor_phys_x;
-                let y2 = cursor_phys_y;
-                draw_rectangle_measurement(
-                    pixmap,
-                    x1.min(x2),
-                    y1.min(y2),
-                    x1.max(x2),
-                    y1.max(y2),
-                    self.font.as_ref(),
-                    self.scale,
+                let (left, top, right, bottom) = normalize_rect(
+                    to_physical(start_x, self.scale),
+                    to_physical(start_y, self.scale),
+                    cursor_phys_x,
+                    cursor_phys_y,
                 );
+                draw_rectangle_measurement(pixmap, left, top, right, bottom, self.font.as_ref(), self.scale);
             }
         } else if cursor_phys_x < self.screenshot.width && cursor_phys_y < self.screenshot.height {
             // Draw completed rectangle if exists
@@ -481,31 +483,21 @@ impl PointerHandler for WaylandApp {
                 PointerEventKind::Release { button: 272, .. } => {
                     // End drag - finalize rectangle only if it has size
                     if let Some((start_x, start_y)) = self.drag_start {
-                        let scale = self.scale as f64;
-                        let x1 = (start_x * scale) as u32;
-                        let y1 = (start_y * scale) as u32;
-                        let x2 = (self.pointer_x * scale) as u32;
-                        let y2 = (self.pointer_y * scale) as u32;
-                        let width = x1.abs_diff(x2);
-                        let height = y1.abs_diff(y2);
-                        if width > 0 && height > 0 {
-                            // Snap each edge to the nearest detected edge
-                            let left = x1.min(x2);
-                            let right = x1.max(x2);
-                            let top = y1.min(y2);
-                            let bottom = y1.max(y2);
-
+                        let (left, top, right, bottom) = normalize_rect(
+                            to_physical(start_x, self.scale),
+                            to_physical(start_y, self.scale),
+                            to_physical(self.pointer_x, self.scale),
+                            to_physical(self.pointer_y, self.scale),
+                        );
+                        if right > left && bottom > top {
                             // Snap each edge inward to nearby content
                             let snapped_left = snap_edge_x(&self.screenshot, left, top, bottom, 1);
                             let snapped_right = snap_edge_x(&self.screenshot, right, top, bottom, -1);
                             let snapped_top = snap_edge_y(&self.screenshot, left, right, top, 1);
                             let snapped_bottom = snap_edge_y(&self.screenshot, left, right, bottom, -1);
 
-                            self.drag_rect = Some((
-                                snapped_left.min(snapped_right),
-                                snapped_top.min(snapped_bottom),
-                                snapped_left.max(snapped_right),
-                                snapped_top.max(snapped_bottom),
+                            self.drag_rect = Some(normalize_rect(
+                                snapped_left, snapped_top, snapped_right, snapped_bottom,
                             ));
                         } else {
                             // Click without drag - clear rectangle

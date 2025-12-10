@@ -166,13 +166,17 @@ fn create_shm_fd() -> std::io::Result<OwnedFd> {
 }
 
 pub struct Screenshot {
-    pub bgra_data: Vec<u8>,
+    bgra_data: Vec<u8>,
     pub width: u32,
     pub height: u32,
     luminance: Vec<u8>,
 }
 
 impl Screenshot {
+    pub fn bgra_data(&self) -> &[u8] {
+        &self.bgra_data
+    }
+
     pub fn get_luminance(&self, x: u32, y: u32) -> u8 {
         if x >= self.width || y >= self.height {
             return 0;
