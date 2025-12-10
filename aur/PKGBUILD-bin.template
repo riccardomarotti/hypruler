@@ -1,4 +1,4 @@
-# Maintainer: t4t5 <tristan@trist.dev>
+# Maintainer: t4t5 <t4t5@hey.com>
 pkgname=hypruler-bin
 pkgver=VERSION_PLACEHOLDER
 pkgrel=1
@@ -9,6 +9,7 @@ license=('MIT')
 depends=('fontconfig')
 provides=('hypruler')
 conflicts=('hypruler')
+options=('!debug')
 source=("hypruler-$pkgver::https://github.com/t4t5/hypruler/releases/download/v$pkgver/hypruler"
         "LICENSE-$pkgver::https://raw.githubusercontent.com/t4t5/hypruler/v$pkgver/LICENSE")
 sha256sums=('SKIP' 'SKIP')
