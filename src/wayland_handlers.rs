@@ -1,5 +1,5 @@
 use crate::capture::Screenshot;
-use crate::edge_detection::{find_edges, snap_to_nearest_edge_x, snap_to_nearest_edge_y};
+use crate::edge_detection::{find_edges, snap_edge_x, snap_edge_y};
 use crate::ui::{draw_crosshair, draw_measurements, draw_rectangle_measurement};
 use std::process::Command;
 
@@ -504,17 +504,11 @@ impl PointerHandler for WaylandApp {
                             let top = y1.min(y2);
                             let bottom = y1.max(y2);
 
-                            // Snap each edge, sampling along the full edge length
-                            // Left edge prefers rightward (1), right edge prefers leftward (-1)
-                            // Top edge prefers downward (1), bottom edge prefers upward (-1)
-                            let snapped_left =
-                                snap_to_nearest_edge_x(&self.screenshot, left, top, bottom, 1);
-                            let snapped_right =
-                                snap_to_nearest_edge_x(&self.screenshot, right, top, bottom, -1);
-                            let snapped_top =
-                                snap_to_nearest_edge_y(&self.screenshot, left, right, top, 1);
-                            let snapped_bottom =
-                                snap_to_nearest_edge_y(&self.screenshot, left, right, bottom, -1);
+                            // Snap each edge inward to nearby content
+                            let snapped_left = snap_edge_x(&self.screenshot, left, top, bottom, 1);
+                            let snapped_right = snap_edge_x(&self.screenshot, right, top, bottom, -1);
+                            let snapped_top = snap_edge_y(&self.screenshot, left, right, top, 1);
+                            let snapped_bottom = snap_edge_y(&self.screenshot, left, right, bottom, -1);
 
                             self.drag_rect = Some((
                                 snapped_left.min(snapped_right),

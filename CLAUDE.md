@@ -9,7 +9,7 @@ A screen measurement tool for Hyprland/Sway (wlroots-based compositors), inspire
 3. **Overlay**: Creates a fullscreen layer-shell surface on the `overlay` layer showing the frozen screenshot
 4. **Measurement**: Two modes:
    - **Auto mode**: Move cursor to automatically detect edges and show measurement lines
-   - **Manual mode**: Click and drag to draw a custom measurement rectangle
+   - **Manual mode**: Click and drag to draw a rectangle; edges auto-snap to nearby content on release
 5. **Rendering**: Uses tiny-skia for drawing lines/labels/rectangles, with pre-converted BGRA data for fast background rendering
 
 ## Architecture
@@ -28,6 +28,7 @@ src/
   - `luminance[]` - grayscale values for edge detection
   - `bgra_data[]` - screenshot pre-converted to Wayland's buffer format
 - **Edge detection** scans from cursor position in 4 directions, looking for luminance changes > threshold
+- **Rectangle snapping** samples every pixel along each drawn edge, scanning inward to find content boundaries
 - **Crosshair cursor** via `wp_cursor_shape_v1` protocol
 
 ## Usage
@@ -37,7 +38,7 @@ src/
    bind = $mainMod, M, exec, /path/to/hypruler
    ```
 2. Move cursor to measure between detected edges (auto mode)
-3. Click and drag to draw a custom measurement rectangle (manual mode)
+3. Click and drag to draw a rectangle that snaps to content edges (manual mode)
 4. Click without dragging to clear the rectangle
 5. Dimensions shown as `{width} x {height}` near cursor or centered on rectangle
 6. Press any key to exit
