@@ -509,15 +509,17 @@ impl PointerHandler for WaylandApp {
                             let center_y = (top + bottom) / 2;
                             let center_x = (left + right) / 2;
 
-                            // Snap each edge using the center of the perpendicular axis
+                            // Snap each edge, preferring inward direction
+                            // Left edge prefers rightward (1), right edge prefers leftward (-1)
+                            // Top edge prefers downward (1), bottom edge prefers upward (-1)
                             let snapped_left =
-                                snap_to_nearest_edge_x(&self.screenshot, left, center_y);
+                                snap_to_nearest_edge_x(&self.screenshot, left, center_y, 1);
                             let snapped_right =
-                                snap_to_nearest_edge_x(&self.screenshot, right, center_y);
+                                snap_to_nearest_edge_x(&self.screenshot, right, center_y, -1);
                             let snapped_top =
-                                snap_to_nearest_edge_y(&self.screenshot, center_x, top);
+                                snap_to_nearest_edge_y(&self.screenshot, center_x, top, 1);
                             let snapped_bottom =
-                                snap_to_nearest_edge_y(&self.screenshot, center_x, bottom);
+                                snap_to_nearest_edge_y(&self.screenshot, center_x, bottom, -1);
 
                             self.drag_rect = Some((
                                 snapped_left.min(snapped_right),

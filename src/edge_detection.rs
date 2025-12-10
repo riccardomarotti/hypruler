@@ -64,44 +64,46 @@ fn scan_vertical(screenshot: &Screenshot, x: u32, start_y: u32, direction: i32) 
 }
 
 /// Snap threshold in pixels - how close to an edge before snapping occurs
-const SNAP_THRESHOLD: u32 = 50;
+const SNAP_THRESHOLD: u32 = 200;
 
-/// Find the nearest vertical edge (left or right) from a given x position.
-/// Scans in both directions within the threshold and returns the closest edge.
-pub fn snap_to_nearest_edge_x(screenshot: &Screenshot, x: u32, y: u32) -> u32 {
-    let left_edge = scan_horizontal_limited(screenshot, x, y, -1, SNAP_THRESHOLD);
-    let right_edge = scan_horizontal_limited(screenshot, x, y, 1, SNAP_THRESHOLD);
-
-    match (left_edge, right_edge) {
-        (Some(left), Some(right)) => {
-            // Return the closer edge
-            let left_dist = x.saturating_sub(left);
-            let right_dist = right.saturating_sub(x);
-            if left_dist <= right_dist { left } else { right }
-        }
-        (Some(left), None) => left,
-        (None, Some(right)) => right,
-        (None, None) => x, // No edge found, return original
+/// Find the nearest vertical edge from a given x position, preferring the inward direction.
+/// `prefer_direction`: 1 = prefer rightward (for left edge), -1 = prefer leftward (for right edge)
+pub fn snap_to_nearest_edge_x(
+    screenshot: &Screenshot,
+    x: u32,
+    y: u32,
+    prefer_direction: i32,
+) -> u32 {
+    // First try the preferred (inward) direction
+    let preferred_edge =
+        scan_horizontal_limited(screenshot, x, y, prefer_direction, SNAP_THRESHOLD);
+    if let Some(edge) = preferred_edge {
+        return edge;
     }
+
+    // Fallback to the opposite direction
+    let fallback_edge =
+        scan_horizontal_limited(screenshot, x, y, -prefer_direction, SNAP_THRESHOLD);
+    fallback_edge.unwrap_or(x)
 }
 
-/// Find the nearest horizontal edge (up or down) from a given y position.
-/// Scans in both directions within the threshold and returns the closest edge.
-pub fn snap_to_nearest_edge_y(screenshot: &Screenshot, x: u32, y: u32) -> u32 {
-    let up_edge = scan_vertical_limited(screenshot, x, y, -1, SNAP_THRESHOLD);
-    let down_edge = scan_vertical_limited(screenshot, x, y, 1, SNAP_THRESHOLD);
-
-    match (up_edge, down_edge) {
-        (Some(up), Some(down)) => {
-            // Return the closer edge
-            let up_dist = y.saturating_sub(up);
-            let down_dist = down.saturating_sub(y);
-            if up_dist <= down_dist { up } else { down }
-        }
-        (Some(up), None) => up,
-        (None, Some(down)) => down,
-        (None, None) => y, // No edge found, return original
+/// Find the nearest horizontal edge from a given y position, preferring the inward direction.
+/// `prefer_direction`: 1 = prefer downward (for top edge), -1 = prefer upward (for bottom edge)
+pub fn snap_to_nearest_edge_y(
+    screenshot: &Screenshot,
+    x: u32,
+    y: u32,
+    prefer_direction: i32,
+) -> u32 {
+    // First try the preferred (inward) direction
+    let preferred_edge = scan_vertical_limited(screenshot, x, y, prefer_direction, SNAP_THRESHOLD);
+    if let Some(edge) = preferred_edge {
+        return edge;
     }
+
+    // Fallback to the opposite direction
+    let fallback_edge = scan_vertical_limited(screenshot, x, y, -prefer_direction, SNAP_THRESHOLD);
+    fallback_edge.unwrap_or(y)
 }
 
 /// Scan horizontally for an edge within a limited distance
