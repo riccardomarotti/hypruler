@@ -1,4 +1,4 @@
-# PixelSnap for Linux
+# Hypruler
 
 A screen measurement tool for Hyprland/Sway (wlroots-based compositors), inspired by PixelSnap 2 for macOS.
 
@@ -34,7 +34,7 @@ src/
 
 1. Launch via keybind (add to `~/.config/hypr/hyprland.conf`):
    ```
-   bind = $mainMod, M, exec, /path/to/pixelsnap
+   bind = $mainMod, M, exec, /path/to/hypruler
    ```
 2. Move cursor to measure between detected edges (auto mode)
 3. Click and drag to draw a custom measurement rectangle (manual mode)
@@ -46,7 +46,7 @@ src/
 
 ```bash
 cargo build --release
-# Binary at target/release/pixelsnap
+# Binary at target/release/hypruler
 ```
 
 ## Dependencies

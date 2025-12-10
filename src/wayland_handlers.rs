@@ -135,7 +135,7 @@ impl WaylandApp {
             qh,
             surface,
             Layer::Overlay,
-            Some("pixelsnap"),
+            Some("hypruler"),
             None,
         );
 

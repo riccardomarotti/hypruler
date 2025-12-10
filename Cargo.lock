@@ -210,6 +210,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hypruler"
+version = "0.1.0"
+dependencies = [
+ "fontdue",
+ "memmap2 0.9.9",
+ "rustix 1.1.2",
+ "smithay-client-toolkit",
+ "tiny-skia",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -278,20 +292,6 @@ name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
-
-[[package]]
-name = "pixelsnap"
-version = "0.1.0"
-dependencies = [
- "fontdue",
- "memmap2 0.9.9",
- "rustix 1.1.2",
- "smithay-client-toolkit",
- "tiny-skia",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
-]
 
 [[package]]
 name = "pkg-config"

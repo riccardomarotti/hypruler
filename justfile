@@ -5,7 +5,7 @@ build:
   cargo build --release
 
 start:
-  ./target/release/pixelsnap
+  ./target/release/hypruler
 
 install:
   cargo install --path .

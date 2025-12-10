@@ -152,7 +152,7 @@ impl Dispatch<wl_output::WlOutput, ()> for CaptureState {
 fn create_shm_fd() -> std::io::Result<OwnedFd> {
     loop {
         match fs::memfd_create(
-            CString::new("pixelsnap-capture")?.as_c_str(),
+            CString::new("hypruler-capture")?.as_c_str(),
             fs::MemfdFlags::CLOEXEC | fs::MemfdFlags::ALLOW_SEALING,
         ) {
             Ok(fd) => {
