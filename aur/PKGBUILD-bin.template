@@ -1,0 +1,19 @@
+# Maintainer: t4t5 <tristan@trist.dev>
+pkgname=hypruler-bin
+pkgver=VERSION_PLACEHOLDER
+pkgrel=1
+pkgdesc="Measure anything on your screen."
+arch=('x86_64')
+url="https://github.com/t4t5/hypruler"
+license=('MIT')
+depends=('fontconfig')
+provides=('hypruler')
+conflicts=('hypruler')
+source=("hypruler-$pkgver::https://github.com/t4t5/hypruler/releases/download/v$pkgver/hypruler"
+        "LICENSE-$pkgver::https://raw.githubusercontent.com/t4t5/hypruler/v$pkgver/LICENSE")
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+    install -Dm755 "hypruler-$pkgver" "$pkgdir/usr/bin/hypruler"
+    install -Dm644 "LICENSE-$pkgver" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
