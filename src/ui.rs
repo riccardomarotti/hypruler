@@ -157,9 +157,9 @@ pub fn draw_rectangle_measurement(
     // Right edge
     stroke_line(pixmap, &stroke_paint, &stroke, right, top, right, bottom);
 
-    // Draw dimension label
-    let width = x2.saturating_sub(x1);
-    let height = y2.saturating_sub(y1);
+    // Draw dimension label (add 1 because pixel coordinates are inclusive)
+    let width = x2.saturating_sub(x1) + 1;
+    let height = y2.saturating_sub(y1) + 1;
     let (lx, ly) = if width >= 150 && height >= 50 {
         // Center on rectangle if large enough
         ((left + right) / 2.0, (top + bottom) / 2.0)
