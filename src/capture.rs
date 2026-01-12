@@ -1,8 +1,10 @@
 use memmap2::MmapMut;
 use rustix::fs::{self, SealFlags};
+use serde::Deserialize;
 use std::ffi::CString;
 use std::fs::File;
 use std::os::fd::{AsFd, OwnedFd};
+use std::process::Command;
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle,
     globals::{GlobalListContents, registry_queue_init},
@@ -21,6 +23,17 @@ struct FrameFormat {
     stride: u32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct OutputInfo {
+    pub name: Option<String>,
+    pub output: Option<wl_output::WlOutput>,
+    done: bool,
+}
+
+struct OutputEnumState {
+    outputs: Vec<OutputInfo>,
+}
+
 struct CaptureState {
     format: Option<FrameFormat>,
     done: bool,
@@ -35,6 +48,47 @@ impl CaptureState {
             done: false,
             ready: false,
             failed: false,
+        }
+    }
+}
+
+// Dispatch implementations for output enumeration
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for OutputEnumState {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: wl_registry::Event,
+        _data: &GlobalListContents,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, usize> for OutputEnumState {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_output::WlOutput,
+        event: wl_output::Event,
+        data: &usize,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        let idx = *data;
+        if idx >= state.outputs.len() {
+            return;
+        }
+        let info = &mut state.outputs[idx];
+
+        match event {
+            wl_output::Event::Name { name } => {
+                info.name = Some(name);
+                info.output = Some(proxy.clone());
+            }
+            wl_output::Event::Done => {
+                info.done = true;
+            }
+            _ => {}
         }
     }
 }
@@ -185,7 +239,78 @@ impl Screenshot {
     }
 }
 
-pub fn capture_screen(conn: &Connection) -> Result<Screenshot, String> {
+#[derive(Deserialize)]
+struct HyprMonitor {
+    name: String,
+    focused: bool,
+}
+
+/// Get the name of the focused monitor from Hyprland
+pub fn get_focused_monitor_name() -> Option<String> {
+    let output = Command::new("hyprctl")
+        .args(["monitors", "-j"])
+        .output()
+        .ok()?;
+    let monitors: Vec<HyprMonitor> = serde_json::from_slice(&output.stdout).ok()?;
+    monitors.into_iter().find(|m| m.focused).map(|m| m.name)
+}
+
+/// Find an output by name, or return the first available
+fn find_output_by_name(
+    conn: &Connection,
+    target_name: Option<&str>,
+) -> Result<wl_output::WlOutput, String> {
+    let (globals, mut event_queue) = registry_queue_init::<OutputEnumState>(conn)
+        .map_err(|e| format!("Failed to init registry: {}", e))?;
+
+    let qh = event_queue.handle();
+    let output_globals: Vec<_> = globals
+        .contents()
+        .clone_list()
+        .into_iter()
+        .filter(|g| g.interface == "wl_output")
+        .collect();
+
+    if output_globals.is_empty() {
+        return Err("No outputs available".to_string());
+    }
+
+    let mut state = OutputEnumState {
+        outputs: vec![OutputInfo::default(); output_globals.len()],
+    };
+
+    // Bind all outputs
+    for (idx, global) in output_globals.iter().enumerate() {
+        let _: wl_output::WlOutput =
+            globals
+                .registry()
+                .bind(global.name, global.version.min(4), &qh, idx);
+    }
+
+    // Wait for all outputs to report their info
+    while !state.outputs.iter().all(|o| o.done) {
+        event_queue
+            .blocking_dispatch(&mut state)
+            .map_err(|e| format!("Dispatch error: {}", e))?;
+    }
+
+    // Find by name, or fall back to first
+    let mut outputs = state.outputs.into_iter();
+    let output = if let Some(name) = target_name {
+        outputs.find(|o| o.name.as_deref() == Some(name))
+    } else {
+        None
+    }
+    .or_else(|| outputs.next())
+    .and_then(|o| o.output);
+
+    output.ok_or_else(|| "No output found".to_string())
+}
+
+pub fn capture_screen(conn: &Connection, target_name: Option<&str>) -> Result<Screenshot, String> {
+    // First, find the target output
+    let output = find_output_by_name(conn, target_name)?;
+
     let (globals, mut event_queue) = registry_queue_init::<CaptureState>(conn)
         .map_err(|e| format!("Failed to init registry: {}", e))?;
 
@@ -195,10 +320,6 @@ pub fn capture_screen(conn: &Connection) -> Result<Screenshot, String> {
     let screencopy_manager: ZwlrScreencopyManagerV1 = globals
         .bind(&qh, 3..=3, ())
         .map_err(|_| "wlr-screencopy protocol not available. Is your compositor wlroots-based?")?;
-
-    let output: wl_output::WlOutput = globals
-        .bind(&qh, 1..=4, ())
-        .map_err(|_| "No output available")?;
 
     let shm: wl_shm::WlShm = globals
         .bind(&qh, 1..=1, ())
