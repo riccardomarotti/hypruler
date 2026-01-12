@@ -92,7 +92,11 @@ fn to_physical(logical: f64, scale: i32) -> u32 {
 }
 
 impl WaylandApp {
-    pub fn new(conn: &Connection, screenshot: Screenshot, target_output_name: Option<String>) -> (Self, EventQueue<Self>) {
+    pub fn new(
+        conn: &Connection,
+        screenshot: Screenshot,
+        target_output_name: Option<String>,
+    ) -> (Self, EventQueue<Self>) {
         let (globals, event_queue) = registry_queue_init(conn).expect("Failed to init registry");
         let qh = event_queue.handle();
 
@@ -142,9 +146,12 @@ impl WaylandApp {
     pub fn create_surface(&mut self, qh: &QueueHandle<Self>) {
         // Find the target output by name using OutputState
         let target_output = self.target_output_name.as_ref().and_then(|name| {
-            self.output_state
-                .outputs()
-                .find(|o| self.output_state.info(o).map(|i| i.name.as_deref() == Some(name)).unwrap_or(false))
+            self.output_state.outputs().find(|o| {
+                self.output_state
+                    .info(o)
+                    .map(|i| i.name.as_deref() == Some(name))
+                    .unwrap_or(false)
+            })
         });
 
         let surface = self.compositor_state.create_surface(qh);
@@ -233,7 +240,15 @@ impl WaylandApp {
                     cursor_phys_x,
                     cursor_phys_y,
                 );
-                draw_rectangle_measurement(pixmap, left, top, right, bottom, self.font.as_ref(), self.scale);
+                draw_rectangle_measurement(
+                    pixmap,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    self.font.as_ref(),
+                    self.scale,
+                );
             }
         } else if cursor_phys_x < self.screenshot.width && cursor_phys_y < self.screenshot.height {
             // Draw completed rectangle if exists
@@ -497,7 +512,9 @@ impl PointerHandler for WaylandApp {
                     self.needs_redraw = true;
                     // Request frame callback - don't draw directly
                     if let Some(ref layer_surface) = self.layer_surface {
-                        layer_surface.wl_surface().frame(qh, layer_surface.wl_surface().clone());
+                        layer_surface
+                            .wl_surface()
+                            .frame(qh, layer_surface.wl_surface().clone());
                         layer_surface.wl_surface().commit();
                     }
                 }
@@ -508,7 +525,9 @@ impl PointerHandler for WaylandApp {
                     self.drag_rect = None;
                     self.needs_redraw = true;
                     if let Some(ref layer_surface) = self.layer_surface {
-                        layer_surface.wl_surface().frame(qh, layer_surface.wl_surface().clone());
+                        layer_surface
+                            .wl_surface()
+                            .frame(qh, layer_surface.wl_surface().clone());
                         layer_surface.wl_surface().commit();
                     }
                 }
@@ -524,12 +543,17 @@ impl PointerHandler for WaylandApp {
                         if right > left && bottom > top {
                             // Snap each edge inward to nearby content
                             let snapped_left = snap_edge_x(&self.screenshot, left, top, bottom, 1);
-                            let snapped_right = snap_edge_x(&self.screenshot, right, top, bottom, -1);
+                            let snapped_right =
+                                snap_edge_x(&self.screenshot, right, top, bottom, -1);
                             let snapped_top = snap_edge_y(&self.screenshot, left, right, top, 1);
-                            let snapped_bottom = snap_edge_y(&self.screenshot, left, right, bottom, -1);
+                            let snapped_bottom =
+                                snap_edge_y(&self.screenshot, left, right, bottom, -1);
 
                             self.drag_rect = Some(normalize_rect(
-                                snapped_left, snapped_top, snapped_right, snapped_bottom,
+                                snapped_left,
+                                snapped_top,
+                                snapped_right,
+                                snapped_bottom,
                             ));
                         } else {
                             // Click without drag - clear rectangle
@@ -539,7 +563,9 @@ impl PointerHandler for WaylandApp {
                     self.is_dragging = false;
                     self.needs_redraw = true;
                     if let Some(ref layer_surface) = self.layer_surface {
-                        layer_surface.wl_surface().frame(qh, layer_surface.wl_surface().clone());
+                        layer_surface
+                            .wl_surface()
+                            .frame(qh, layer_surface.wl_surface().clone());
                         layer_surface.wl_surface().commit();
                     }
                 }

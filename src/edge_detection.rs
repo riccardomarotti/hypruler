@@ -86,14 +86,46 @@ fn scan_for_edge(
 
 pub fn find_edges(screenshot: &Screenshot, cursor_x: u32, cursor_y: u32) -> Edges {
     Edges {
-        left: scan_for_edge(screenshot, cursor_x, cursor_y, Axis::X, -1, EDGE_THRESHOLD, None)
-            .unwrap_or(0),
-        right: scan_for_edge(screenshot, cursor_x, cursor_y, Axis::X, 1, EDGE_THRESHOLD, None)
-            .unwrap_or(screenshot.width - 1),
-        up: scan_for_edge(screenshot, cursor_x, cursor_y, Axis::Y, -1, EDGE_THRESHOLD, None)
-            .unwrap_or(0),
-        down: scan_for_edge(screenshot, cursor_x, cursor_y, Axis::Y, 1, EDGE_THRESHOLD, None)
-            .unwrap_or(screenshot.height - 1),
+        left: scan_for_edge(
+            screenshot,
+            cursor_x,
+            cursor_y,
+            Axis::X,
+            -1,
+            EDGE_THRESHOLD,
+            None,
+        )
+        .unwrap_or(0),
+        right: scan_for_edge(
+            screenshot,
+            cursor_x,
+            cursor_y,
+            Axis::X,
+            1,
+            EDGE_THRESHOLD,
+            None,
+        )
+        .unwrap_or(screenshot.width - 1),
+        up: scan_for_edge(
+            screenshot,
+            cursor_x,
+            cursor_y,
+            Axis::Y,
+            -1,
+            EDGE_THRESHOLD,
+            None,
+        )
+        .unwrap_or(0),
+        down: scan_for_edge(
+            screenshot,
+            cursor_x,
+            cursor_y,
+            Axis::Y,
+            1,
+            EDGE_THRESHOLD,
+            None,
+        )
+        .unwrap_or(screenshot.height - 1),
     }
 }
 

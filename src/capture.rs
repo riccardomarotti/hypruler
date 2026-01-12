@@ -246,19 +246,20 @@ struct HyprMonitor {
 }
 
 /// Get the name of the focused monitor from Hyprland
-fn get_focused_monitor_name() -> Option<String> {
-    let output = Command::new("hyprctl").args(["monitors", "-j"]).output().ok()?;
+pub fn get_focused_monitor_name() -> Option<String> {
+    let output = Command::new("hyprctl")
+        .args(["monitors", "-j"])
+        .output()
+        .ok()?;
     let monitors: Vec<HyprMonitor> = serde_json::from_slice(&output.stdout).ok()?;
     monitors.into_iter().find(|m| m.focused).map(|m| m.name)
 }
 
-/// Get the name of the focused output (or None to use first available)
-pub fn get_target_output_name() -> Option<String> {
-    get_focused_monitor_name()
-}
-
 /// Find an output by name, or return the first available
-fn find_output_by_name(conn: &Connection, target_name: Option<&str>) -> Result<wl_output::WlOutput, String> {
+fn find_output_by_name(
+    conn: &Connection,
+    target_name: Option<&str>,
+) -> Result<wl_output::WlOutput, String> {
     let (globals, mut event_queue) = registry_queue_init::<OutputEnumState>(conn)
         .map_err(|e| format!("Failed to init registry: {}", e))?;
 
@@ -280,9 +281,10 @@ fn find_output_by_name(conn: &Connection, target_name: Option<&str>) -> Result<w
 
     // Bind all outputs
     for (idx, global) in output_globals.iter().enumerate() {
-        let _: wl_output::WlOutput = globals
-            .registry()
-            .bind(global.name, global.version.min(4), &qh, idx);
+        let _: wl_output::WlOutput =
+            globals
+                .registry()
+                .bind(global.name, global.version.min(4), &qh, idx);
     }
 
     // Wait for all outputs to report their info
