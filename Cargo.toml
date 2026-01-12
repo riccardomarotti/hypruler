@@ -15,3 +15,5 @@ tiny-skia = "0.11"
 fontdue = "0.9"
 memmap2 = "0.9"
 rustix = { version = "1.0", features = ["fs", "shm"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

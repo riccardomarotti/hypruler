@@ -60,6 +60,7 @@ pub struct WaylandApp {
     width: u32,
     height: u32,
     scale: i32,
+    target_output: wl_output::WlOutput,
 
     // Cursor
     cursor_shape_manager: Option<CursorShapeManager>,
@@ -91,7 +92,7 @@ fn to_physical(logical: f64, scale: i32) -> u32 {
 }
 
 impl WaylandApp {
-    pub fn new(conn: &Connection, screenshot: Screenshot) -> (Self, EventQueue<Self>) {
+    pub fn new(conn: &Connection, screenshot: Screenshot, target_output: wl_output::WlOutput) -> (Self, EventQueue<Self>) {
         let (globals, event_queue) = registry_queue_init(conn).expect("Failed to init registry");
         let qh = event_queue.handle();
 
@@ -120,6 +121,7 @@ impl WaylandApp {
             width: 0,
             height: 0,
             scale: 1,
+            target_output,
             cursor_shape_manager,
             cursor_shape_device: None,
             pointer_x: 0.0,
@@ -144,7 +146,7 @@ impl WaylandApp {
             surface,
             Layer::Overlay,
             Some("hypruler"),
-            None,
+            Some(&self.target_output),
         );
 
         layer_surface.set_anchor(Anchor::TOP | Anchor::BOTTOM | Anchor::LEFT | Anchor::RIGHT);
