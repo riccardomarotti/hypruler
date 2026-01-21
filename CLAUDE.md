@@ -24,7 +24,7 @@ src/
 ```
 
 - **Screen capture** at physical resolution (e.g., 2880x1920 for HiDPI)
-- **HiDPI support**: Dimensions are displayed in logical pixels (physical pixels ÷ scale factor)
+- **HiDPI support**: Fractional scaling via `wp_fractional_scale_v1` and `wp_viewporter` protocols. Dimensions displayed in logical pixels (physical pixels ÷ scale factor)
 - **Pre-computed data** at startup:
   - `luminance[]` - grayscale values for edge detection
   - `bgra_data[]` - screenshot pre-converted to Wayland's buffer format
@@ -55,7 +55,7 @@ cargo build --release
 
 - `smithay-client-toolkit` - Wayland client library with layer-shell support
 - `wayland-protocols-wlr` - wlroots screencopy protocol
-- `wayland-protocols` - cursor shape protocol
+- `wayland-protocols` - cursor shape, fractional scale, and viewporter protocols
 - `tiny-skia` - 2D rendering (lines, shapes)
 - `fontdue` - Font rasterization for labels
 - `memmap2` / `rustix` - Shared memory for screen capture
